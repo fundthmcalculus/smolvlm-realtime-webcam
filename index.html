@@ -77,9 +77,67 @@
     <canvas id="canvas" class="hidden"></canvas> <!-- For capturing frames -->
 
     <div class="io-areas">
+        <textarea id="systemText" style="height: 2em; width: 40em" name="SystemInstruction">
+You are a expert in video analysis. Answer the user's questions based on the video provided.
+If you cannot see anything in the image, say "I cannot see anything in the image."
+Analyze the live camera feed and describe the visual aspects, focusing on objects, activities, lighting, camera, color grading, mood, and aesthetic style.
+For example, you can tell the details about the scene like what the person is doing and other scene description such as:
+1. Person's action:
+- What is the person doing?
+- Any specific activity or task?
+- what is the mood of the person?
+- Any interaction with objects or environment?
+
+2. Objects:
+- What are the objects in the scene?
+- How are they positioned?
+- What is the purpose of the objects?
+- What is the relationship between the objects?
+
+3. Environment:
+- What is the environment?
+- How is the environment positioned?
+- What is the purpose of the environment?
+- What is the relationship between the environment and the objects?
+
+4. Lighting:
+- What is the lighting?
+- How is the lighting positioned?
+- Primary light source?
+- Natural or artificial?
+- Shadows and their effect?
+- Backlighting or fill light?
+- Light directionality?
+
+5. Camera:
+- Camera angle?
+- Camera movement?
+- Depth of field?
+- Composition?
+
+6. Color Grading:
+- Color temperature?
+- Color contrasts?
+- Saturation level?
+- Any specific grading style?
+
+7. Mood:
+- Emotional tone of the scene?
+- How lighting and color affect mood?
+- Any emotional cues?
+
+8. Aesthetic Style:
+- Overall aesthetic style?
+- Visual themes present?
+- Genre influence?
+- Noticeable visual effects or textures?
+
+user question:
+            </textarea>
+    </div>
         <div>
             <label for="baseURL">Base API:</label><br>
-            <input id="baseURL" name="Instruction" value="http://localhost:8080"></textarea>
+            <input id="baseURL" name="Instruction" value="http://localhost:1234"/>
         </div>
         <div>
             <label for="instructionText">Instruction:</label><br>
@@ -96,9 +154,13 @@
         <select id="intervalSelect" name="Interval between 2 requests">
             <option value="100">100ms</option>
             <option value="250">250ms</option>
-            <option value="500" selected>500ms</option>
+            <option value="500">500ms</option>
             <option value="1000">1s</option>
-            <option value="2000">2s</option>
+            <option value="2000" selected>2s</option>
+        </select>
+        <label for="modelSelect">Model:</label>
+        <select id="modelSelect" name="Model">
+            <option value="smolvlm" selected>SmolVLM-500M</option>
         </select>
         <button id="startButton" class="start">Start</button>
     </div>
@@ -111,6 +173,8 @@
         const responseText = document.getElementById('responseText');
         const intervalSelect = document.getElementById('intervalSelect');
         const startButton = document.getElementById('startButton');
+        const modelSelect = document.getElementById('modelSelect');
+        const systemText =document.getElementById('systemText');
 
         instructionText.value = "What do you see?"; // default instruction
 
@@ -118,31 +182,83 @@
         let intervalId;
         let isProcessing = false;
 
+        async function updateAvailableModels() {
+            try {
+                const response = await fetch(`${baseURL.value}/v1/models`, {
+                    mode: 'cors',
+                    headers: {
+                        'Access-Control-Allow-Origin': '*'
+                    }
+                });
+                if (!response.ok) {
+                    console.error('Failed to fetch models:', response.statusText);
+                    return;
+                }
+                const data = await response.json();
+                modelSelect.innerHTML = ''; // Clear existing options
+
+                let firstVisionModel = null;
+                data.data.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = `${model.id} ${model.capabilities?.vision ? '(Vision)' : ''}`;
+                    if (model.capabilities?.vision && !firstVisionModel) {
+                        firstVisionModel = model.id;
+                    }
+                    modelSelect.appendChild(option);
+                });
+
+                // Select the first vision model if available
+                if (firstVisionModel) {
+                    modelSelect.value = firstVisionModel;
+                }
+            } catch (error) {
+                console.error('Error fetching models:', error);
+            }
+        }
+
+
+        let isRequesting = false; // Flag to prevent parallel requests
+
         // Returns response text (string)
         async function sendChatCompletionRequest(instruction, imageBase64URL) {
-            const response = await fetch(`${baseURL.value}/v1/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    max_tokens: 100,
-                    messages: [
-                        { role: 'user', content: [
-                            { type: 'text', text: instruction },
-                            { type: 'image_url', image_url: {
-                                url: imageBase64URL,
-                            } }
-                        ] },
-                    ]
-                })
-            });
-            if (!response.ok) {
-                const errorData = await response.text();
-                return `Server error: ${response.status} - ${errorData}`;
+            if (isRequesting) {
+                return {status: "processing", message: "Previous request still processing..."};
             }
-            const data = await response.json();
-            return data.choices[0].message.content;
+
+            isRequesting = true;
+            try {
+                const response = await fetch(`${baseURL.value}/v1/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        max_tokens: 256,
+                        model: modelSelect.value,
+                        messages: [
+                            {
+                                role: 'user', content: [
+                                    {type: 'text', text: instruction},
+                                    {
+                                        type: 'image_url', image_url: {
+                                            url: imageBase64URL,
+                                        }
+                                    }
+                                ]
+                            },
+                        ]
+                    })
+                });
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    return {status: "error", message: `Server error: ${response.status} - ${errorData}`};
+                }
+                const data = await response.json();
+                return {status: "success", message: data.choices[0].message.content};
+            } finally {
+                isRequesting = false;
+            }
         }
 
         // 1. Ask for camera permission on load
@@ -173,7 +289,7 @@
         async function sendData() {
             if (!isProcessing) return; // Ensure we don't have overlapping requests if processing takes longer than interval
 
-            const instruction = instructionText.value;
+            const instruction = systemText.value + "\n" + instructionText.value;
             const imageBase64URL = captureImage();
 
             if (!imageBase64URL) {
@@ -190,7 +306,9 @@
 
             try {
                 const response = await sendChatCompletionRequest(payload.instruction, payload.imageBase64URL);
-                responseText.value = response;
+                if (response.status !== "processing") {
+                    responseText.value = response.message;
+                }
             } catch (error) {
                 console.error('Error sending data:', error);
                 responseText.value = `Error: ${error.message}`;
@@ -247,8 +365,11 @@
             }
         });
 
-        // Initialize camera when the page loads
-        window.addEventListener('DOMContentLoaded', initCamera);
+        // Initialize camera and fetch models when the page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            initCamera();
+            updateAvailableModels();
+        });
 
         // Optional: Stop stream when page is closed/navigated away to release camera
         window.addEventListener('beforeunload', () => {
