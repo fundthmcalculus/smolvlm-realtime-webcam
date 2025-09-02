@@ -241,7 +241,8 @@ user question:
                                 role: 'user', content: [
                                     {type: 'text', text: instruction},
                                     {
-                                        type: 'image_url', image_url: {
+                                        type: 'image_url',
+                                        image_url: {
                                             url: imageBase64URL,
                                         }
                                     }
@@ -336,7 +337,7 @@ user question:
             // Initial immediate call
             sendData(); 
             
-            // Then set interval
+            // Then set an interval
             intervalId = setInterval(sendData, intervalMs);
         }
 
